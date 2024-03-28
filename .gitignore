@@ -1,0 +1,6 @@
+.vscode/settings.json
+.terraform
+terraform.tfstate
+terraform.tfstate.backup
+install-debug.sh
+values.yaml
