@@ -2,5 +2,6 @@
 .terraform
 terraform.tfstate
 terraform.tfstate.backup
+.terraform.tfstate.lock.info
 install-debug.sh
 values.yaml

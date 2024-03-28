@@ -36,27 +36,21 @@ neo4j:
   resources:
     cpu: "${neo4j_resources_resources_cpu}"
     memory: "${neo4j_resources_resources_memory}"
-    
-statefulset:
-  replicas: "${replicas}"
 
 # Volumes for Neo4j
 volumes:
   data:
     # labels to set on pvc/pv - these labels will be passed to the created ebs volume
     labels:
-      ${indent(6,volume_labels)}
+      ${indent(6,k8s_labels)}
 
     # Set it to true when you do not want to use the subPathExpr
     disableSubPathExpr: false
     
-    mode: dynamic
-    dynamic:
-      storageClassName: "${storage_class}"
-      accessModes:
-        - ReadWriteOnce
-      requests:
-        storage: "${ebs_volume_size}"
+    mode: volume
+    volume:
+      persistentVolumeClaim:
+        claimName: ${persistent_volume_claim_name}
     
   # provide a volume to use for backups
   # n.b. backups will be written to /backups on the volume
@@ -161,6 +155,7 @@ config:
   dbms.routing.default_router: "SERVER"
   
   dbms.cluster.minimum_initial_system_primaries_count: "${minimum_initial_system_primaries_count}"
+  
   # Automatically enable new servers - This will change their state from "Free" to "Enabled"
   initial.dbms.automatically_enable_free_servers: "true"
   # Set the default number of primaries for new databases
@@ -188,7 +183,10 @@ config:
   server.directories.plugins: "/var/lib/neo4j/labs"
   # Exposes prometheus metrics on port 2004
   server.metrics.prometheus.enabled: "true"
-
+  dbms.cluster.discovery.resolver_type: "K8S"
+  dbms.kubernetes.label_selector: "app=${cluster_name},helm.neo4j.com/service=internals,helm.neo4j.com/clustering=true"
+  dbms.kubernetes.service_port_name: "tcp-discovery"
+  server.metrics.prometheus.endpoint: "0.0.0.0:2004"
   
   # Recommended settings from Neo4J
   db.logs.query.parameter_logging_enabled: "false"
@@ -227,12 +225,7 @@ podSpec:
               values:
               - ${node_toleration_value}
             %{ endif }
-%{ endif }
-  # Anti Affinity
-  # If set to true then an anti-affinity rule is applied to prevent database pods with the same `neo4j.name` running on a single Kubernetes node.
-  # If set to false then no anti-affinity rules are applied
-  # If set to an object then that object is used for the Neo4j podAntiAffinity
-  # podAntiAffinity: ${pod_anti_affinity_enabled}
+%{ endif }             
 
   # Add tolerations to the Neo4j pod
   # Have to explicitly set the toleration to allow the pod to be scheduled on a node for the dedicated node group

@@ -24,13 +24,12 @@ resource "kubernetes_namespace_v1" "namespace" {
 resource "kubernetes_persistent_volume_claim_v1" "neo4j-primary" {
   count = var.enabled ? var.cluster_num_primaries : 0
   metadata {
-    name      = "data-${local.helm_chart_name_neo4j}-${var.cluster_name}-${count.index}"
+    name      = "data-${local.helm_chart_name_neo4j}-${var.cluster_name}-${count.index}-0"
     namespace = local.namespace
     labels = {
       # the app name is used to link this persistent volume to the Neo4j StatefulSet
-      "app"                                = var.cluster_name,
-      "helm.neo4j.com/volume-role"         = "data"
-      "statefulset.kubernetes.io/pod-name" = "${local.helm_chart_name_neo4j}-${var.cluster_name}-${count.index}"
+      "app"                        = var.cluster_name,
+      "helm.neo4j.com/volume-role" = "data"
     }
     # https://github.com/kubernetes-sigs/aws-ebs-csi-driver/blob/master/docs/modify-volume.md
     annotations = {
@@ -52,16 +51,18 @@ resource "kubernetes_persistent_volume_claim_v1" "neo4j-primary" {
 
 resource "helm_release" "neo4j" {
   depends_on       = [kubernetes_namespace_v1.namespace]
-  count            = var.enabled ? 1 : 0
-  name             = "${local.helm_chart_name_neo4j}-${var.cluster_name}"
-  chart            = "${path.module}/charts/neo4j"
+  count            = var.enabled ? var.cluster_num_primaries : 0
+  name             = "${local.helm_chart_name_neo4j}-${var.cluster_name}-${count.index}"
+  repository       = local.helm_chart_repository
+  chart            = local.helm_chart_name_neo4j
+  version          = local.helm_chart_version
   namespace        = local.namespace
   create_namespace = false
   force_update     = false
   atomic           = false
   reuse_values     = false
   recreate_pods    = false
-  timeout          = 180
+  timeout          = 300
   wait             = true
 
 
@@ -70,15 +71,14 @@ resource "helm_release" "neo4j" {
       cluster_name                           = var.cluster_name
       neo4j_password                         = var.neo4j_password
       neo4j_edition                          = var.neo4j_edition
-      replicas                               = var.cluster_num_primaries
       minimum_initial_system_primaries_count = var.cluster_num_primaries
       # Maintain a Raft Quorum
-      pod_disruption_budget_max_unavailable  = (tonumber(var.cluster_num_primaries) - 1) / 2
+      pod_disruption_budget_max_unavailable  = 1
       neo4j_accept_license_agreement         = tostring(var.neo4j_accept_license_agreement)
       neo4j_offline_maintenance_mode_enabled = tostring(var.neo4j_offline_maintenance_mode_enabled)
       neo4j_resources_resources_cpu          = var.neo4j_resources_resources_cpu
       neo4j_resources_resources_memory       = var.neo4j_resources_resources_memory
-      volume_labels                          = yamlencode(var.k8s_labels)
+      k8s_labels                             = yamlencode(var.k8s_labels)
       ebs_volume_size                        = tostring(var.ebs_volume_size)
       availability_zones                     = var.availability_zones
       cluster_num_primaries                  = tostring(var.cluster_num_primaries)
@@ -92,27 +92,27 @@ resource "helm_release" "neo4j" {
       server_memory_heap_initial_size = local.memory_heap_pagecache
       server_memory_heap_max_size     = local.memory_heap_pagecache
       server_memory_pagecache_size    = local.memory_heap_pagecache
+      persistent_volume_claim_name    = kubernetes_persistent_volume_claim_v1.neo4j-primary[count.index].metadata.0.name
       additional_labels = yamlencode({
         role    = "primary",
-        project = var.deploy_config.project
+        project = var.deploy_config.project,
+        # triggerchange = "true"
       })
       node_toleration_key   = var.node_toleration_key
       node_toleration_value = var.node_toleration_value
-      storage_class         = var.storage_class
     })
   ]
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "neo4j-secondary" {
-  count = var.enabled && var.cluster_num_secondaries > 0 ? var.cluster_num_secondaries : 0
+  count = var.enabled ? var.cluster_num_secondaries : 0
   metadata {
-    name      = "data-${local.helm_chart_name_neo4j}-${var.cluster_name}-secondary-${count.index}"
+    name      = "data-${local.helm_chart_name_neo4j}-${var.cluster_name}-secondary-${count.index}-0"
     namespace = local.namespace
     labels = {
       # the app name is used to link this persistent volume to the Neo4j StatefulSet
-      "app"                                = var.cluster_name,
-      "helm.neo4j.com/volume-role"         = "data"
-      "statefulset.kubernetes.io/pod-name" = "${local.helm_chart_name_neo4j}-${var.cluster_name}-secondary-${count.index}"
+      "app"                        = var.cluster_name,
+      "helm.neo4j.com/volume-role" = "data"
     }
     # https://github.com/kubernetes-sigs/aws-ebs-csi-driver/blob/master/docs/modify-volume.md
     annotations = {
@@ -134,9 +134,11 @@ resource "kubernetes_persistent_volume_claim_v1" "neo4j-secondary" {
 
 resource "helm_release" "neo4j-secondaries" {
   depends_on       = [kubernetes_namespace_v1.namespace, helm_release.neo4j]
-  count            = var.enabled && var.cluster_num_secondaries > 0 ? 1 : 0
-  name             = "${local.helm_chart_name_neo4j}-${var.cluster_name}-secondary"
-  chart            = "${path.module}/charts/neo4j"
+  count            = var.enabled && var.cluster_num_secondaries > 0 ? var.cluster_num_secondaries : 0
+  name             = "${local.helm_chart_name_neo4j}-${var.cluster_name}-secondary-${count.index}"
+  repository       = local.helm_chart_repository
+  chart            = local.helm_chart_name_neo4j
+  version          = local.helm_chart_version
   namespace        = local.namespace
   create_namespace = false
   force_update     = false
@@ -151,14 +153,13 @@ resource "helm_release" "neo4j-secondaries" {
       cluster_name                           = var.cluster_name
       neo4j_password                         = var.neo4j_password
       neo4j_edition                          = var.neo4j_edition
-      replicas                               = var.cluster_num_secondaries
       minimum_initial_system_primaries_count = var.cluster_num_primaries
-      pod_disruption_budget_max_unavailable  = tostring(max((tonumber(var.cluster_num_secondaries) - 1), 1))
+      pod_disruption_budget_max_unavailable  = 1
       neo4j_accept_license_agreement         = tostring(var.neo4j_accept_license_agreement)
       neo4j_offline_maintenance_mode_enabled = tostring(var.neo4j_offline_maintenance_mode_enabled)
       neo4j_resources_resources_cpu          = var.neo4j_resources_resources_cpu
       neo4j_resources_resources_memory       = var.neo4j_resources_resources_memory
-      volume_labels                          = yamlencode(var.k8s_labels)
+      k8s_labels                             = yamlencode(var.k8s_labels)
       ebs_volume_size                        = tostring(var.ebs_volume_size)
       availability_zones                     = var.availability_zones
       cluster_num_primaries                  = tostring(var.cluster_num_primaries)
@@ -172,13 +173,14 @@ resource "helm_release" "neo4j-secondaries" {
       server_memory_heap_initial_size = local.memory_heap_pagecache
       server_memory_heap_max_size     = local.memory_heap_pagecache
       server_memory_pagecache_size    = local.memory_heap_pagecache
+      persistent_volume_claim_name    = kubernetes_persistent_volume_claim_v1.neo4j-secondary[count.index].metadata.0.name
       additional_labels = yamlencode({
         role    = "secondary",
         project = var.deploy_config.project
+        # triggerchange = "true"
       })
       node_toleration_key   = var.node_toleration_key
       node_toleration_value = var.node_toleration_value
-      storage_class         = var.storage_class
     })
   ]
 }
